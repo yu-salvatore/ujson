@@ -292,6 +292,236 @@ str_ok:
     return cnt;
 }
 
+/* Compare token with null-terminated string */
+static int uj_eq(const char *js, const uj_tok *t, const char *s)
+{
+    const char *p = js + t->start;
+    unsigned short n = UJ_LEN(t);
+    while (n && *s)
+    {
+        if (*p++ != *s++)
+        {
+            return 0;
+        }
+        n--;
+    }
+    return (n == 0 && *s == 0);
+}
+
+/* Token to int */
+static int uj_int(const char *js, const uj_tok *t)
+{
+    const char *p = js + t->start;
+    int v = 0, neg = 0;
+    unsigned short n = UJ_LEN(t);
+    if (*p == '-')
+    {
+        neg = 1;
+        p++;
+        n--;
+    }
+    while (n--)
+    {
+        v = v * 10 + (*p++ - '0');
+    }
+    return neg ? -v : v;
+}
+
+/* Token to bool (1=true, 0=false, -1=other) */
+static int uj_bool(const char *js, const uj_tok *t)
+{
+    if (UJ_TYPE(t) != UJ_PRI)
+    {
+        return -1;
+    }
+    char c = js[t->start];
+    if (c == 't')
+    {
+        return 1;
+    }
+    if (c == 'f')
+    {
+        return 0;
+    }
+    return -1;
+}
+
+/* Check if token is null */
+static int uj_null(const char *js, const uj_tok *t)
+{
+    return (UJ_TYPE(t) == UJ_PRI && js[t->start] == 'n');
+}
+
+/* Query result */
+typedef struct
+{
+    const char    *js;
+    const uj_tok  *tk;
+    unsigned char  ok;      /* 1=found, 0=not found */
+} uj_val;
+
+/* Skip token and all its children, return next token index */
+static int uj_skip(const uj_tok *tk, int idx, int ntk)
+{
+    int i = idx;
+    unsigned short end;
+    if (i < 0 || i >= ntk)
+    {
+        return ntk;
+    }
+
+    unsigned char ty = UJ_TYPE(&tk[i]);
+    if (ty == UJ_OBJ || ty == UJ_ARR)
+    {
+        end = tk[i].start + UJ_LEN(&tk[i]);
+        i++;
+        while (i < ntk && tk[i].start < end)
+        {
+            i++;
+        }
+        return i;
+    }
+    return i + 1;
+}
+
+/* Get value from object by key, return token index or -1 */
+static int uj_obj_get(const char *js, const uj_tok *tk, int obj, int ntk,
+                      const char *key, int keylen)
+{
+    if (obj < 0 || obj >= ntk)
+    {
+        return -1;
+    }
+    if (UJ_TYPE(&tk[obj]) != UJ_OBJ)
+    {
+        return -1;
+    }
+
+    int i = obj + 1;
+    int end = tk[obj].start + UJ_LEN(&tk[obj]);
+
+    while (i < ntk && tk[i].start < end)
+    {
+        if (UJ_TYPE(&tk[i]) == UJ_STR)
+        {
+            const char *p = js + tk[i].start;
+            int n = UJ_LEN(&tk[i]);
+            int match = (n == keylen);
+            if (match)
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    if (p[j] != key[j])
+                    {
+                        match = 0;
+                        break;
+                    }
+                }
+            }
+            if (match && i + 1 < ntk)
+            {
+                return i + 1;
+            }
+        }
+        i++;
+        if (i < ntk)
+        {
+            i = uj_skip(tk, i, ntk);
+        }
+    }
+    return -1;
+}
+
+/* Get value from array by index, return token index or -1 */
+static int uj_arr_get(const uj_tok *tk, int arr, int ntk, int index)
+{
+    if (arr < 0 || arr >= ntk)
+    {
+        return -1;
+    }
+    if (UJ_TYPE(&tk[arr]) != UJ_ARR)
+    {
+        return -1;
+    }
+
+    int i = arr + 1;
+    int end = tk[arr].start + UJ_LEN(&tk[arr]);
+    int count = 0;
+
+    while (i < ntk && tk[i].start < end)
+    {
+        if (count == index)
+        {
+            return i;
+        }
+        i = uj_skip(tk, i, ntk);
+        count++;
+    }
+    return -1;
+}
+
+/* Parse integer from string (internal helper) */
+static int uj_atoi(const char **p)
+{
+    int v = 0;
+    while (**p >= '0' && **p <= '9')
+    {
+        v = v * 10 + (**p - '0');
+        (*p)++;
+    }
+    return v;
+}
+
+/*
+ * Path query: "key.nested[0].field[1][2]"
+ * Returns uj_val with ok=1 if found
+ */
+static uj_val uj_get(const char *js, const uj_tok *tk, int ntk, const char *path)
+{
+    uj_val v = {js, 0, 0};
+    int idx = 0;
+
+    while (*path && idx >= 0 && idx < ntk)
+    {
+        if (*path == '.')
+        {
+            path++;
+        }
+
+        if (*path == '[')
+        {
+            path++;
+            int index = uj_atoi(&path);
+            if (*path == ']')
+            {
+                path++;
+            }
+            idx = uj_arr_get(tk, idx, ntk, index);
+        }
+        else if (*path && *path != '[')
+        {
+            const char *start = path;
+            while (*path && *path != '.' && *path != '[')
+            {
+                path++;
+            }
+            int keylen = path - start;
+            idx = uj_obj_get(js, tk, idx, ntk, start, keylen);
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    if (idx >= 0 && idx < ntk)
+    {
+        v.tk = &tk[idx];
+        v.ok = 1;
+    }
+    return v;
+}
+
 #ifdef __cplusplus
 }
 #endif
