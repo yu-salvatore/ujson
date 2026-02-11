@@ -1,4 +1,3 @@
-
 #ifndef UJSON_H
 #define UJSON_H
 
@@ -521,6 +520,126 @@ static uj_val uj_get(const char *js, const uj_tok *tk, int ntk, const char *path
     }
     return v;
 }
+
+/* Get type: UJ_OBJ, UJ_ARR, UJ_STR, UJ_PRI, or -1 if not found */
+#define uj_v_type(v)  ((v)->ok ? UJ_TYPE((v)->tk) : -1)
+
+/* Get as int */
+static int uj_v_int(const uj_val *v)
+{
+    if (!v->ok)
+    {
+        return 0;
+    }
+    return uj_int(v->js, v->tk);
+}
+
+/* Get as bool (1=true, 0=false, -1=error) */
+static int uj_v_bool(const uj_val *v)
+{
+    if (!v->ok)
+    {
+        return -1;
+    }
+    return uj_bool(v->js, v->tk);
+}
+
+/* Check if null */
+static int uj_v_null(const uj_val *v)
+{
+    if (!v->ok)
+    {
+        return 0;
+    }
+    return uj_null(v->js, v->tk);
+}
+
+/* Copy string to buffer, return actual length */
+static int uj_v_str(const uj_val *v, char *buf, int bufsz)
+{
+    if (!v->ok || !buf || bufsz < 1)
+    {
+        return 0;
+    }
+    int len = UJ_LEN(v->tk);
+    if (len >= bufsz)
+    {
+        len = bufsz - 1;
+    }
+    const char *src = v->js + v->tk->start;
+    for (int i = 0; i < len; i++)
+    {
+        buf[i] = src[i];
+    }
+    buf[len] = '\0';
+    return len;
+}
+
+/* Get string length */
+static int uj_v_len(const uj_val *v)
+{
+    if (!v->ok)
+    {
+        return 0;
+    }
+    return UJ_LEN(v->tk);
+}
+
+/* Get array length or object key count */
+static int uj_v_size(const uj_val *v)
+{
+    if (!v->ok)
+    {
+        return 0;
+    }
+    unsigned char ty = UJ_TYPE(v->tk);
+    if (ty == UJ_ARR)
+    {
+        return v->tk->size;
+    }
+    if (ty == UJ_OBJ)
+    {
+        return v->tk->size / 2;
+    }
+    return 0;
+}
+
+/* Direct pointer to string (not null-terminated!) */
+static const char *uj_v_ptr(const uj_val *v)
+{
+    if (!v->ok)
+    {
+        return 0;
+    }
+    return v->js + v->tk->start;
+}
+
+/* Compare value with string */
+static int uj_v_eq(const uj_val *v, const char *s)
+{
+    if (!v->ok)
+    {
+        return 0;
+    }
+    return uj_eq(v->js, v->tk, s);
+}
+
+#ifdef UJ_PARENT_LINKS
+/* Get parent token index (-1 if root) */
+#define uj_parent(t) ((t)->parent)
+
+/* Get parent value */
+static uj_val uj_v_parent(const uj_val *v, const uj_tok *tk)
+{
+    uj_val r = {v->js, 0, 0};
+    if (v->ok && v->tk->parent >= 0)
+    {
+        r.tk = &tk[v->tk->parent];
+        r.ok = 1;
+    }
+    return r;
+}
+#endif
 
 #ifdef __cplusplus
 }
