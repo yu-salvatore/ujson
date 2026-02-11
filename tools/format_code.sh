@@ -6,4 +6,4 @@ cd "$PROJECT_DIR"
 astyle \
 --options="$SCRIPT_DIR/astyle.cfg" \
 --recursive "include/*.h" "tests/*.c" \
-$1 $2 $3 # additional args such as --dry-run etc.
+"$@" # additional args such as --dry-run etc.
