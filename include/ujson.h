@@ -67,6 +67,8 @@ static int uj_parse(uj_t *p, const char *js, unsigned short len,
 {
     unsigned short cnt = p->next;
     char c;
+    /* expect: 0=VAL 1=SEP(,/close) 2=COLON 3=KEY 4=DONE */
+    unsigned char expect = 0;
 
     while (p->pos < len)
     {
@@ -79,9 +81,19 @@ static int uj_parse(uj_t *p, const char *js, unsigned short len,
             continue;
         }
 
+        /* After root value, only whitespace allowed */
+        if (tk && expect == 4)
+        {
+            return UJ_EINVAL;
+        }
+
         /* Object or array open */
         if (c == '{' || c == '[')
         {
+            if (tk && expect != 0)
+            {
+                return UJ_EINVAL;
+            }
             if (tk)
             {
                 if (p->next >= ntk)
@@ -100,6 +112,7 @@ static int uj_parse(uj_t *p, const char *js, unsigned short len,
                     tk[p->super].size++;
                 }
                 p->super = p->next;
+                expect = (c == '{') ? 3 : 0;
             }
             p->next++;
             cnt++;
@@ -110,6 +123,25 @@ static int uj_parse(uj_t *p, const char *js, unsigned short len,
         {
             if (tk)
             {
+                /* Validate close bracket context */
+                if (c == '}')
+                {
+                    if (expect != 1 &&
+                        !(expect == 3 && p->super >= 0 &&
+                          tk[p->super].size == 0))
+                    {
+                        return UJ_EINVAL;
+                    }
+                }
+                else
+                {
+                    if (expect != 1 &&
+                        !(expect == 0 && p->super >= 0 &&
+                          tk[p->super].size == 0))
+                    {
+                        return UJ_EINVAL;
+                    }
+                }
                 unsigned char ty = (c == '}') ? UJ_OBJ : UJ_ARR;
                 short i = p->next - 1;
                 while (i >= 0)
@@ -123,6 +155,7 @@ static int uj_parse(uj_t *p, const char *js, unsigned short len,
                         {
                             p->super--;
                         }
+                        expect = (p->super >= 0) ? 1 : 4;
                         goto brk_ok;
                     }
                     i--;
@@ -135,6 +168,11 @@ brk_ok:
         /* String */
         else if (c == '"')
         {
+            if (tk && expect != 0 && expect != 3)
+            {
+                return UJ_EINVAL;
+            }
+            unsigned char was_key = (tk && expect == 3);
             unsigned short st = ++p->pos;
             while (p->pos < len)
             {
@@ -157,6 +195,18 @@ brk_ok:
                         if (p->super >= 0)
                         {
                             tk[p->super].size++;
+                        }
+                        if (was_key)
+                        {
+                            expect = 2;
+                        }
+                        else if (p->super >= 0)
+                        {
+                            expect = 1;
+                        }
+                        else
+                        {
+                            expect = 4;
                         }
                     }
                     p->next++;
@@ -210,28 +260,52 @@ str_ok:
         /* Colon: key-value separator */
         else if (c == ':')
         {
-            if (tk && p->next > 0)
+            if (tk)
             {
-                p->super = p->next - 1;
+                if (expect != 2)
+                {
+                    return UJ_EINVAL;
+                }
+                if (p->next > 0)
+                {
+                    p->super = p->next - 1;
+                }
+                expect = 0;
             }
             p->pos++;
         }
         /* Comma: element separator */
         else if (c == ',')
         {
-            if (tk && p->super >= 0)
+            if (tk)
             {
-                unsigned char ty = UJ_TYPE(&tk[p->super]);
-                if (ty != UJ_OBJ && ty != UJ_ARR)
+                if (expect != 1)
                 {
-                    short i = p->super - 1;
-                    while (i >= 0 && UJ_LEN(&tk[i]) != 0)
+                    return UJ_EINVAL;
+                }
+                if (p->super >= 0)
+                {
+                    unsigned char ty = UJ_TYPE(&tk[p->super]);
+                    if (ty == UJ_OBJ)
                     {
-                        i--;
+                        expect = 3;
                     }
-                    if (i >= 0)
+                    else if (ty == UJ_ARR)
                     {
-                        p->super = i;
+                        expect = 0;
+                    }
+                    else
+                    {
+                        short i = p->super - 1;
+                        while (i >= 0 && UJ_LEN(&tk[i]) != 0)
+                        {
+                            i--;
+                        }
+                        if (i >= 0)
+                        {
+                            p->super = i;
+                            expect = (UJ_TYPE(&tk[i]) == UJ_OBJ) ? 3 : 0;
+                        }
                     }
                 }
             }
@@ -240,24 +314,113 @@ str_ok:
         /* Primitive: number, true, false, null */
         else
         {
-            unsigned short st = p->pos;
-            if (!((c >= '0' && c <= '9') || c == '-' || c == 't' || c == 'f' || c == 'n'))
+            if (tk && expect != 0)
             {
                 return UJ_EINVAL;
             }
-            while (p->pos < len)
+            unsigned short st = p->pos;
+
+            if (c == 't')
             {
-                c = js[p->pos];
-                if (c == ',' || c == '}' || c == ']' || c == ' ' || c == '\t' || c == '\n' || c == '\r')
-                {
-                    break;
-                }
-                if ((unsigned char)c < 0x20)
+                if (p->pos + 4 > len || js[p->pos + 1] != 'r' ||
+                    js[p->pos + 2] != 'u' || js[p->pos + 3] != 'e')
                 {
                     return UJ_EINVAL;
                 }
-                p->pos++;
+                p->pos += 4;
             }
+            else if (c == 'f')
+            {
+                if (p->pos + 5 > len || js[p->pos + 1] != 'a' ||
+                    js[p->pos + 2] != 'l' || js[p->pos + 3] != 's' ||
+                    js[p->pos + 4] != 'e')
+                {
+                    return UJ_EINVAL;
+                }
+                p->pos += 5;
+            }
+            else if (c == 'n')
+            {
+                if (p->pos + 4 > len || js[p->pos + 1] != 'u' ||
+                    js[p->pos + 2] != 'l' || js[p->pos + 3] != 'l')
+                {
+                    return UJ_EINVAL;
+                }
+                p->pos += 4;
+            }
+            else if (c == '-' || (c >= '0' && c <= '9'))
+            {
+                /* RFC 8259 number: [minus] int [frac] [exp] */
+                unsigned short np = p->pos;
+                if (js[np] == '-')
+                {
+                    np++;
+                }
+                if (np >= len || js[np] < '0' || js[np] > '9')
+                {
+                    return UJ_EINVAL;
+                }
+                if (js[np] == '0')
+                {
+                    np++;
+                    if (np < len && js[np] >= '0' && js[np] <= '9')
+                    {
+                        return UJ_EINVAL;
+                    }
+                }
+                else
+                {
+                    while (np < len && js[np] >= '0' && js[np] <= '9')
+                    {
+                        np++;
+                    }
+                }
+                if (np < len && js[np] == '.')
+                {
+                    np++;
+                    if (np >= len || js[np] < '0' || js[np] > '9')
+                    {
+                        return UJ_EINVAL;
+                    }
+                    while (np < len && js[np] >= '0' && js[np] <= '9')
+                    {
+                        np++;
+                    }
+                }
+                if (np < len && (js[np] == 'e' || js[np] == 'E'))
+                {
+                    np++;
+                    if (np < len && (js[np] == '+' || js[np] == '-'))
+                    {
+                        np++;
+                    }
+                    if (np >= len || js[np] < '0' || js[np] > '9')
+                    {
+                        return UJ_EINVAL;
+                    }
+                    while (np < len && js[np] >= '0' && js[np] <= '9')
+                    {
+                        np++;
+                    }
+                }
+                p->pos = np;
+            }
+            else
+            {
+                return UJ_EINVAL;
+            }
+
+            /* Verify delimiter after primitive */
+            if (p->pos < len)
+            {
+                char d = js[p->pos];
+                if (d != ' ' && d != '\t' && d != '\n' && d != '\r' &&
+                    d != ',' && d != '}' && d != ']')
+                {
+                    return UJ_EINVAL;
+                }
+            }
+
             if (tk)
             {
                 if (p->next >= ntk)
@@ -275,10 +438,17 @@ str_ok:
                 {
                     tk[p->super].size++;
                 }
+                expect = (p->super >= 0) ? 1 : 4;
             }
             p->next++;
             cnt++;
         }
+    }
+
+    /* Empty input */
+    if (cnt == 0)
+    {
+        return UJ_EINVAL;
     }
 
     /* Check for unclosed containers */
