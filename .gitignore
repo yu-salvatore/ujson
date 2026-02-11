@@ -1,0 +1,16 @@
+# Build
+build/
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test binaries
+tests/build_test_conformance
