@@ -175,8 +175,14 @@ brk_ok:
                     c = js[p->pos];
                     switch (c)
                     {
-                        case '"': case '\\': case '/':
-                        case 'b': case 'f': case 'n': case 'r': case 't':
+                        case '"':
+                        case '\\':
+                        case '/':
+                        case 'b':
+                        case 'f':
+                        case 'n':
+                        case 'r':
+                        case 't':
                             break;
                         case 'u':
                             /* Validate \uXXXX - must have 4 hex digits */
@@ -184,7 +190,8 @@ brk_ok:
                             {
                                 return UJ_EPART;
                             }
-                            if (!UJ_IS_HEX(js[p->pos + 1]) || !UJ_IS_HEX(js[p->pos + 2]) || !UJ_IS_HEX(js[p->pos + 3]) || !UJ_IS_HEX(js[p->pos + 4]))
+                            if (!UJ_IS_HEX(js[p->pos + 1]) || !UJ_IS_HEX(js[p->pos + 2]) || !UJ_IS_HEX(js[p->pos + 3]) ||
+                                !UJ_IS_HEX(js[p->pos + 4]))
                             {
                                 return UJ_EINVAL;
                             }
